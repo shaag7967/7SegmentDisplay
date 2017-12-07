@@ -60,7 +60,6 @@ typedef struct segmentDisplay_s
 
 typedef enum state_e
 {
-    STATE_STARTUP,
     STATE_DISPLAY,
     STATE_TRANSIT_BLANK,
     STATE_TRANSIT_DIG_1,
@@ -72,8 +71,6 @@ typedef enum state_e
 // *** internal variables ******************************************************
 unsigned char onTimeCounter;
 unsigned char offTimeCounter;
-unsigned char isr_onTimeCounter;
-unsigned char isr_offTimeCounter;
 
 segmentDisplay_t display; // config
 segValue_t currentDigits[4]; // currently displayed digits
@@ -82,7 +79,6 @@ segValue_t isr_currentDigits[4]; // in isr calculated digits
 state_t state;
 
 unsigned char tickCounter;
-unsigned char currentBrightness;
 
 // *** led values **************************************************************
 //const unsigned char ledPwmValues[] = {0,1,1,2,2,2,2,2,3,3,3,4,4,4,5,5,6,7,7,8,
@@ -136,7 +132,7 @@ void display_init(void)
     display.transitionMode = SLOT_TRANS_MODE_SCROLL;
 //    display.transitionMode = SLOT_TRANS_MODE_INSTANT;
     display.showColon = 1;
-    display.brightness = 99;
+    display.brightness = 50;
 
     // 
     currentDigits[0] = display.slots[display.activeSlot].digits[0];
@@ -150,11 +146,10 @@ void display_init(void)
     isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
 
     // minimale Helligkeit
-    currentBrightness = 0;
-    isr_onTimeCounter = ledPwmValues[currentBrightness];
-    isr_offTimeCounter = ledPwmValues[99] - isr_onTimeCounter;
+    onTimeCounter = ledPwmValues[display.brightness];
+    offTimeCounter = ledPwmValues[99] - onTimeCounter;
     
-    state = STATE_STARTUP;
+    state = STATE_DISPLAY;
     tickCounter = 0;
 }
 
@@ -162,9 +157,7 @@ void display_handler(void)
 {
     unsigned short i;
 
-    onTimeCounter = isr_onTimeCounter;
-    offTimeCounter = isr_offTimeCounter;
-
+    // interrupts stay enabled, otherwise jitter increases (?)
     currentDigits[0] = isr_currentDigits[0];
     currentDigits[1] = isr_currentDigits[1];
     currentDigits[2] = isr_currentDigits[2];
@@ -226,26 +219,6 @@ void display_cyclicTasks(void)
 
     switch(state)
     {
-    case STATE_STARTUP:
-        if(tickCounter & 0x10)
-        {
-            isr_onTimeCounter = ledPwmValues[currentBrightness];
-            isr_offTimeCounter = ledPwmValues[99] - isr_onTimeCounter;
-
-            currentBrightness++;
-
-            if(currentBrightness >= display.brightness)
-            {
-                if(display.showColon)
-                {
-                    isr_currentDigits[1] &= 0x7F;
-                }
-
-                tickCounter = 0;
-                state = STATE_DISPLAY;
-            }
-        }
-        break;
     case STATE_DISPLAY:
         if(tickCounter == display.slotDuration)
         {
