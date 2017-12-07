@@ -34,7 +34,7 @@ void main(void)
     INTCON = 0;
     PIR1bits.TMR2IF = 0;
     PIE1bits.TMR2IE = 1;
-    //INTCONbits.GIE = 1;
+    INTCONbits.GIE = 1;
     INTCONbits.PEIE = 1;
 
     

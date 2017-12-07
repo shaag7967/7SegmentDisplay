@@ -7,17 +7,16 @@
 //#define _XTAL_FREQ 20000000
 #define _XTAL_FREQ 4000000
 
+#define LED_RESOLUTION   2  // us
 
 #define DIGIT_1  0x01
 #define DIGIT_2  0x02
 #define DIGIT_3  0x04
 #define DIGIT_4  0x08
 #define display_enableDigit(x)  PORTA = (x)
+#define display_disableDigit()  PORTA = 0x00
 #define display_setDigitValue(x) PORTB = ((unsigned char)x)
-#define display_setDigitOff() PORTB = 0xFF
 
-#define ON_TIME_STEP  6
-#define OFF_TIME      33
 
 // *** internal typedefs *******************************************************
 
@@ -29,7 +28,7 @@ typedef enum slotTransitionMode_e
 
 typedef enum segValue_e
 {
-    SEGVALUE_NONE = 0b11111111,
+    SEGVALUE_OFF = 0b11111111,
     SEGVALUE_ONE = 0b11111001,
     SEGVALUE_TWO = 0b10100100,
     SEGVALUE_THREE = 0b10110000,
@@ -73,33 +72,42 @@ typedef enum state_e
 // *** internal variables ******************************************************
 unsigned char onTimeCounter;
 unsigned char offTimeCounter;
+unsigned char isr_onTimeCounter;
+unsigned char isr_offTimeCounter;
 
 segmentDisplay_t display; // config
 segValue_t currentDigits[4]; // currently displayed digits
-
-state_t state;
-unsigned char isr_onTimeCounter;
-unsigned char isr_offTimeCounter;
-unsigned char tickCounter;
-
 segValue_t isr_currentDigits[4]; // in isr calculated digits
 
+state_t state;
+
+unsigned char tickCounter;
+unsigned char currentBrightness;
+
+// *** led values **************************************************************
+//const unsigned char ledPwmValues[] = {0,1,1,2,2,2,2,2,3,3,3,4,4,4,5,5,6,7,7,8,
+//   9,10,11,13,14,16,17,19,22,24,27,30,33,37,41,45,50,56,62,69,77,86,95,106,118,
+//   131,146,162,180,200};
+
+//const unsigned char ledPwmValues[] = {0,4,4,5,6,7,9,10,12,14,17,21,24,29,35,41,49,59,70,83,99,118,141,168,200};
+
+
+const unsigned char ledPwmValues[100] = {0,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,
+    3,3,4,4,4,4,4,5,5,5,5,6,6,6,7,7,7,8,8,9,9,10,10,11,11,12,13,13,14,15,16,17,
+    17,18,19,20,22,23,24,25,27,28,30,31,33,35,37,39,41,43,45,48,50,53,56,59,62,
+    66,69,73,77,81,86,90,95,100,106,112,118,124,131,138,146,153,162,171,180,190,200};
+
+
+#define MAX_BRIGHTNESS_PWM_VALUE   (ledPwmValues[sizeof(ledPwmValues)/sizeof(ledPwmValues[0]) - 1])
 
 // *** function definitions ****************************************************
-
-//void display_setBrightness(unsigned char percent)
-//{
-//    
-//}
-
-// brings pins into initial state
 
 void display_init(void)
 {
     ADCON1 = 0x06; // PortA as digital I/O
 
     display_enableDigit(DIGIT_1);
-    display_setDigitOff();
+    display_setDigitValue(SEGVALUE_OFF);
 
     TRISA = 0xF0;
     TRISB = 0x00;
@@ -126,8 +134,9 @@ void display_init(void)
     display.scrollDuration = 15;
     display.activeSlot = 0;
     display.transitionMode = SLOT_TRANS_MODE_SCROLL;
+//    display.transitionMode = SLOT_TRANS_MODE_INSTANT;
     display.showColon = 1;
-    display.brightness = 100;
+    display.brightness = 99;
 
     // 
     currentDigits[0] = display.slots[display.activeSlot].digits[0];
@@ -140,21 +149,19 @@ void display_init(void)
     isr_currentDigits[2] = display.slots[display.activeSlot].digits[2];
     isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
 
-    // minimal brightness
-    onTimeCounter = isr_onTimeCounter = 0;
-    offTimeCounter = isr_offTimeCounter = OFF_TIME;
-
+    // minimale Helligkeit
+    currentBrightness = 0;
+    isr_onTimeCounter = ledPwmValues[currentBrightness];
+    isr_offTimeCounter = ledPwmValues[99] - isr_onTimeCounter;
+    
     state = STATE_STARTUP;
     tickCounter = 0;
 }
 
 void display_handler(void)
 {
-    unsigned char i;
+    unsigned short i;
 
-    // neue WErte aus ISR in lokale Arbeitsvariablen kopieren
-    // (dabei Interrupt sperren)
-    INTCONbits.GIE = 0;
     onTimeCounter = isr_onTimeCounter;
     offTimeCounter = isr_offTimeCounter;
 
@@ -163,43 +170,54 @@ void display_handler(void)
     currentDigits[2] = isr_currentDigits[2];
     currentDigits[3] = isr_currentDigits[3];
 
-    INTCONbits.GIE = 1;
-
 
     // digit 1
-    display_enableDigit(DIGIT_1);
     display_setDigitValue(currentDigits[0]);
+    display_enableDigit(DIGIT_1);
 
     for(i = 0; i < onTimeCounter; i++)
-        __delay_us(2);
-    display_setDigitOff();
-
-    // digit 2
-    display_enableDigit(DIGIT_2);
-    display_setDigitValue(currentDigits[1]);
-
-    for(i = 0; i < onTimeCounter; i++)
-        __delay_us(2);
-    display_setDigitOff();
-
-    // digit 3
-    display_enableDigit(DIGIT_3);
-    display_setDigitValue(currentDigits[2]);
-
-    for(i = 0; i < onTimeCounter; i++)
-        __delay_us(2);
-    display_setDigitOff();
-
-    // digit 4
-    display_enableDigit(DIGIT_4);
-    display_setDigitValue(currentDigits[3]);
-    for(i = 0; i < onTimeCounter; i++)
-        __delay_us(2);
-    display_setDigitOff();
-
-    // off time
+        __delay_us(LED_RESOLUTION);
+    
+    display_disableDigit();
+    
     for(i = 0; i < offTimeCounter; i++)
-        __delay_us(500);
+        __delay_us(LED_RESOLUTION);
+    
+    // digit 2
+    display_setDigitValue(currentDigits[1]);
+    display_enableDigit(DIGIT_2);
+
+    for(i = 0; i < onTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
+    
+    display_disableDigit();
+    
+    for(i = 0; i < offTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
+    
+    // digit 3
+    display_setDigitValue(currentDigits[2]);
+    display_enableDigit(DIGIT_3);
+    
+    for(i = 0; i < onTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
+    
+    display_disableDigit();
+    
+    for(i = 0; i < offTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
+    
+    // digit 4
+    display_setDigitValue(currentDigits[3]);
+    display_enableDigit(DIGIT_4);
+    
+    for(i = 0; i < onTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
+    
+    display_disableDigit();
+    
+    for(i = 0; i < offTimeCounter; i++)
+        __delay_us(LED_RESOLUTION);
 }
 
 void display_cyclicTasks(void)
@@ -209,24 +227,26 @@ void display_cyclicTasks(void)
     switch(state)
     {
     case STATE_STARTUP:
-        if(tickCounter & 0x01)
+        if(tickCounter & 0x10)
         {
-            isr_onTimeCounter += ON_TIME_STEP;
-            isr_offTimeCounter--;
+            isr_onTimeCounter = ledPwmValues[currentBrightness];
+            isr_offTimeCounter = ledPwmValues[99] - isr_onTimeCounter;
 
-            if(isr_offTimeCounter == 0)
+            currentBrightness++;
+
+            if(currentBrightness >= display.brightness)
             {
+                if(display.showColon)
+                {
+                    isr_currentDigits[1] &= 0x7F;
+                }
+
                 tickCounter = 0;
                 state = STATE_DISPLAY;
             }
         }
         break;
     case STATE_DISPLAY:
-        if(display.showColon)
-        {
-            isr_currentDigits[1] &= 0x7F;
-        }
-        
         if(tickCounter == display.slotDuration)
         {
             tickCounter = 0;
@@ -240,12 +260,17 @@ void display_cyclicTasks(void)
                 isr_currentDigits[0] = (isr_currentDigits[1] | 0x80);
                 isr_currentDigits[1] = isr_currentDigits[2];
                 isr_currentDigits[2] = isr_currentDigits[3];
-                isr_currentDigits[3] = SEGVALUE_NONE;
+                isr_currentDigits[3] = SEGVALUE_OFF;
 
                 state = STATE_TRANSIT_BLANK;
             }
             else
             {
+                if(display.showColon)
+                {
+                    isr_currentDigits[1] &= 0x7F;
+                }
+
                 isr_currentDigits[0] = display.slots[display.activeSlot].digits[0];
                 isr_currentDigits[1] = display.slots[display.activeSlot].digits[1];
                 isr_currentDigits[2] = display.slots[display.activeSlot].digits[2];
@@ -296,7 +321,12 @@ void display_cyclicTasks(void)
             isr_currentDigits[1] = isr_currentDigits[2];
             isr_currentDigits[2] = isr_currentDigits[3];
             isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
-                
+            
+            if(display.showColon)
+            {
+                isr_currentDigits[1] &= 0x7F;
+            }
+            
             tickCounter = 0;
             state = STATE_DISPLAY;
         }
