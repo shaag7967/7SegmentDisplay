@@ -20,44 +20,6 @@
 
 // *** internal typedefs *******************************************************
 
-typedef enum slotTransitionMode_e
-{
-    SLOT_TRANS_MODE_INSTANT,
-    SLOT_TRANS_MODE_SCROLL
-} slotTransitionMode_t;
-
-typedef enum segValue_e
-{
-    SEGVALUE_OFF = 0b11111111,
-    SEGVALUE_ONE = 0b11111001,
-    SEGVALUE_TWO = 0b10100100,
-    SEGVALUE_THREE = 0b10110000,
-    SEGVALUE_FOUR = 0b10011001,
-    SEGVALUE_NINE = 0b10010000,
-    SEGVALUE_U = 0b11000001,
-    SEGVALUE_H = 0b10001001,
-    SEGVALUE_A = 0b10001000,
-    SEGVALUE_G = 0b10000010,
-    SEGVALUE_MINUS = 0b10111111
-} segValue_t;
-
-typedef struct displaySlot_s
-{
-    segValue_t digits[4]; // output pin levels
-    unsigned char enabled;
-} displaySlot_t;
-
-typedef struct segmentDisplay_s
-{
-    displaySlot_t slots[3];
-    unsigned short slotDuration;
-    unsigned short scrollDuration;
-    unsigned char activeSlot;
-    slotTransitionMode_t transitionMode;
-    unsigned char showColon;
-    unsigned char brightness;
-} segmentDisplay_t;
-
 typedef enum state_e
 {
     STATE_DISPLAY,
@@ -72,29 +34,23 @@ typedef enum state_e
 unsigned char onTimeCounter;
 unsigned char offTimeCounter;
 
-segmentDisplay_t display; // config
+unsigned char activeSlot;
+displayConfig_t display; // config
+displayValue_t slots[3];
+
 segValue_t currentDigits[4]; // currently displayed digits
-segValue_t isr_currentDigits[4]; // in isr calculated digits
+segValue_t isr_currentDigits[4]; // in isr calculated digits used in next round
 
 state_t state;
 
 unsigned char tickCounter;
 
 // *** led values **************************************************************
-//const unsigned char ledPwmValues[] = {0,1,1,2,2,2,2,2,3,3,3,4,4,4,5,5,6,7,7,8,
-//   9,10,11,13,14,16,17,19,22,24,27,30,33,37,41,45,50,56,62,69,77,86,95,106,118,
-//   131,146,162,180,200};
-
-//const unsigned char ledPwmValues[] = {0,4,4,5,6,7,9,10,12,14,17,21,24,29,35,41,49,59,70,83,99,118,141,168,200};
-
-
 const unsigned char ledPwmValues[100] = {0,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,
     3,3,4,4,4,4,4,5,5,5,5,6,6,6,7,7,7,8,8,9,9,10,10,11,11,12,13,13,14,15,16,17,
     17,18,19,20,22,23,24,25,27,28,30,31,33,35,37,39,41,43,45,48,50,53,56,59,62,
     66,69,73,77,81,86,90,95,100,106,112,118,124,131,138,146,153,162,171,180,190,200};
 
-
-#define MAX_BRIGHTNESS_PWM_VALUE   (ledPwmValues[sizeof(ledPwmValues)/sizeof(ledPwmValues[0]) - 1])
 
 // *** function definitions ****************************************************
 
@@ -108,44 +64,43 @@ void display_init(void)
     TRISA = 0xF0;
     TRISB = 0x00;
 
-    display.slots[0].digits[0] = SEGVALUE_H;
-    display.slots[0].digits[1] = SEGVALUE_A;
-    display.slots[0].digits[2] = SEGVALUE_A;
-    display.slots[0].digits[3] = SEGVALUE_G;
-    display.slots[0].enabled = 0;
+    slots[0].digits[0] = SEGVALUE_H;
+    slots[0].digits[1] = SEGVALUE_A;
+    slots[0].digits[2] = SEGVALUE_A;
+    slots[0].digits[3] = SEGVALUE_G;
+    slots[0].enabled = 0;
 
-    display.slots[1].digits[0] = SEGVALUE_ONE;
-    display.slots[1].digits[1] = SEGVALUE_TWO;
-    display.slots[1].digits[2] = SEGVALUE_THREE;
-    display.slots[1].digits[3] = SEGVALUE_FOUR;
-    display.slots[1].enabled = 0;
+    slots[1].digits[0] = SEGVALUE_ONE;
+    slots[1].digits[1] = SEGVALUE_TWO;
+    slots[1].digits[2] = SEGVALUE_THREE;
+    slots[1].digits[3] = SEGVALUE_FOUR;
+    slots[1].enabled = 0;
 
-    display.slots[2].digits[0] = SEGVALUE_MINUS;
-    display.slots[2].digits[1] = SEGVALUE_MINUS;
-    display.slots[2].digits[2] = SEGVALUE_MINUS;
-    display.slots[2].digits[3] = SEGVALUE_MINUS;
-    display.slots[2].enabled = 0;
+    slots[2].digits[0] = SEGVALUE_MINUS;
+    slots[2].digits[1] = SEGVALUE_MINUS;
+    slots[2].digits[2] = SEGVALUE_MINUS;
+    slots[2].digits[3] = SEGVALUE_MINUS;
+    slots[2].enabled = 0;
 
     display.slotDuration = 150;
     display.scrollDuration = 15;
-    display.activeSlot = 0;
     display.transitionMode = SLOT_TRANS_MODE_SCROLL;
-//    display.transitionMode = SLOT_TRANS_MODE_INSTANT;
     display.showColon = 1;
-    display.brightness = 50;
+    display.brightness = 90;
 
+    activeSlot = 0;
+    
     // 
-    currentDigits[0] = display.slots[display.activeSlot].digits[0];
-    currentDigits[1] = display.slots[display.activeSlot].digits[1];
-    currentDigits[2] = display.slots[display.activeSlot].digits[2];
-    currentDigits[3] = display.slots[display.activeSlot].digits[3];
+    currentDigits[0] = slots[activeSlot].digits[0];
+    currentDigits[1] = slots[activeSlot].digits[1];
+    currentDigits[2] = slots[activeSlot].digits[2];
+    currentDigits[3] = slots[activeSlot].digits[3];
 
-    isr_currentDigits[0] = display.slots[display.activeSlot].digits[0];
-    isr_currentDigits[1] = display.slots[display.activeSlot].digits[1];
-    isr_currentDigits[2] = display.slots[display.activeSlot].digits[2];
-    isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
+    isr_currentDigits[0] = slots[activeSlot].digits[0];
+    isr_currentDigits[1] = slots[activeSlot].digits[1];
+    isr_currentDigits[2] = slots[activeSlot].digits[2];
+    isr_currentDigits[3] = slots[activeSlot].digits[3];
 
-    // minimale Helligkeit
     onTimeCounter = ledPwmValues[display.brightness];
     offTimeCounter = ledPwmValues[99] - onTimeCounter;
     
@@ -223,10 +178,13 @@ void display_cyclicTasks(void)
         if(tickCounter == display.slotDuration)
         {
             tickCounter = 0;
+            
+            onTimeCounter = ledPwmValues[display.brightness];
+            offTimeCounter = ledPwmValues[99] - onTimeCounter;
 
-            display.activeSlot++;
-            if(display.activeSlot > 2)
-                display.activeSlot = 0;
+            activeSlot++;
+            if(activeSlot > 2)
+                activeSlot = 0;
 
             if(display.transitionMode == SLOT_TRANS_MODE_SCROLL)
             {
@@ -244,10 +202,10 @@ void display_cyclicTasks(void)
                     isr_currentDigits[1] &= 0x7F;
                 }
 
-                isr_currentDigits[0] = display.slots[display.activeSlot].digits[0];
-                isr_currentDigits[1] = display.slots[display.activeSlot].digits[1];
-                isr_currentDigits[2] = display.slots[display.activeSlot].digits[2];
-                isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
+                isr_currentDigits[0] = slots[activeSlot].digits[0];
+                isr_currentDigits[1] = slots[activeSlot].digits[1];
+                isr_currentDigits[2] = slots[activeSlot].digits[2];
+                isr_currentDigits[3] = slots[activeSlot].digits[3];
             }
         }
         break;
@@ -257,7 +215,7 @@ void display_cyclicTasks(void)
             isr_currentDigits[0] = isr_currentDigits[1];
             isr_currentDigits[1] = isr_currentDigits[2];
             isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = display.slots[display.activeSlot].digits[0];
+            isr_currentDigits[3] = slots[activeSlot].digits[0];
                 
             tickCounter = 0;
             state = STATE_TRANSIT_DIG_1;
@@ -269,7 +227,7 @@ void display_cyclicTasks(void)
             isr_currentDigits[0] = isr_currentDigits[1];
             isr_currentDigits[1] = isr_currentDigits[2];
             isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = display.slots[display.activeSlot].digits[1];
+            isr_currentDigits[3] = slots[activeSlot].digits[1];
                 
             tickCounter = 0;
             state = STATE_TRANSIT_DIG_2;
@@ -281,7 +239,7 @@ void display_cyclicTasks(void)
             isr_currentDigits[0] = isr_currentDigits[1];
             isr_currentDigits[1] = isr_currentDigits[2];
             isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = display.slots[display.activeSlot].digits[2];
+            isr_currentDigits[3] = slots[activeSlot].digits[2];
                 
             tickCounter = 0;
             state = STATE_TRANSIT_DIG_3;
@@ -293,7 +251,7 @@ void display_cyclicTasks(void)
             isr_currentDigits[0] = isr_currentDigits[1];
             isr_currentDigits[1] = isr_currentDigits[2];
             isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = display.slots[display.activeSlot].digits[3];
+            isr_currentDigits[3] = slots[activeSlot].digits[3];
             
             if(display.showColon)
             {
@@ -305,5 +263,16 @@ void display_cyclicTasks(void)
         }
         break;
     }
+}
+
+void display_setBrightness(char percent)
+{
+    if(percent > 0)
+        percent--;
+    
+    display.brightness = (percent > 99) ? 99 : percent;
+    
+    onTimeCounter = ledPwmValues[display.brightness];
+    offTimeCounter = ledPwmValues[99] - onTimeCounter;
 }
 
