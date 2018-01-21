@@ -15,6 +15,8 @@
       <itemPath>src/main.c</itemPath>
       <itemPath>src/7segmentDisplay.h</itemPath>
       <itemPath>src/7segmentDisplay.c</itemPath>
+      <itemPath>src/i2c.h</itemPath>
+      <itemPath>src/i2c.c</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"

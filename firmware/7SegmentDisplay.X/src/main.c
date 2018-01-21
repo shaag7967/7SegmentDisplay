@@ -19,7 +19,11 @@
 // *** defines *****************************************************************
 #define I2C_ADDRESS     0x70  // 7 bit address (bit 0 to 6)
 
-#define DISPLAY_CMD_CONFIG      0x01
+#define DISPLAY_CMD_SET_CONFIG       0x01
+#define DISPLAY_CMD_SET_BRIGHTNESS   0x02
+
+#define DISPLAY_CMD_SET_SLOT_VALUE   0x10
+
 
 // *** functions ***************************************************************
 void i2c_init(char address);
@@ -37,55 +41,60 @@ void main(void)
 {
     i2c_init(I2C_ADDRESS);
     timer2_init();
-
     display_init();
-    
     
     INTCON = 0;
     INTCONbits.GIE = 1;
     INTCONbits.PEIE = 1;
 
-    TRISC1 = 0;
-    RC1 = 0;
-    TRISC2 = 0;
-    RC2 = 0;
-    TRISC5 = 0;
-    RC5 = 0;    
-    TRISC6 = 0;
-    RC6 = 0;
-    TRISC7 = 0;
-    RC7 = 0;
-    
-    RC6 = SSPSTATbits.BF;
+//    TRISC1 = 0;
+//    RC1 = 0;
+//    TRISC2 = 0;
+//    RC2 = 0;
     
     while(1)
     {
-        display_handler();
+        if(PIR1bits.TMR2IF == 1)
+        {
+            display_calcNextValueToShow();
+            PIR1bits.TMR2IF = 0;
+        }
+        
+        display_generatePwm();
 
         if(rxDataAvailable)
         {
-            INTCONbits.GIE = 0;
-            
-            if(rxByteCount == 9)
+            INTCONbits.PEIE = 0;
+
+            if(rxByteCount > 2)
             {
-                if(rxDataBuffer[1] == DISPLAY_CMD_CONFIG)
+                if(rxDataBuffer[1] == DISPLAY_CMD_SET_CONFIG)
                 {
-                    char* dataPtr = (char*)&display;
-                    dataPtr[0] = rxDataBuffer[2];
-                    dataPtr[1] = rxDataBuffer[3];
-                    dataPtr[2] = rxDataBuffer[4];
-                    dataPtr[3] = rxDataBuffer[5];
-                    dataPtr[4] = rxDataBuffer[6];
-                    dataPtr[5] = rxDataBuffer[7];
-                    dataPtr[6] = rxDataBuffer[8];
-                    
-                    if(display.brightness == 56)
-                        RC2 = 1;
+                    if(rxByteCount == (2 + sizeof(displayConfig_t)))
+                    {
+                        display_setConfig((displayConfig_t*)(rxDataBuffer+2));
+                        display_recalcPwmDutyCycle();
+                    }
+                }
+                else if(rxDataBuffer[1] == DISPLAY_CMD_SET_BRIGHTNESS)
+                {
+                    if(rxByteCount == 3)
+                    {
+                        display_setConfig_brightness(rxDataBuffer[2]);
+                        display_recalcPwmDutyCycle();
+                    }
+                }
+                else if(rxDataBuffer[1] == DISPLAY_CMD_SET_SLOT_VALUE)
+                {
+                    if(rxByteCount == (2 + 1 + sizeof(displayValue_t)))
+                    {
+                        display_setSlotDisplayValue(rxDataBuffer[2], (displayValue_t*)(rxDataBuffer+3));
+                    }
                 }
             }
-            
+
             rxDataAvailable = 0;
-            INTCONbits.GIE = 1;
+            INTCONbits.PEIE = 1;
         }
     }
 
@@ -106,6 +115,7 @@ void i2c_init(char address)
     PIE1bits.SSPIE = 1;
 }
 
+
 void timer2_init(void)
 {
     //Timer2 Registers Prescaler= 16 - TMR2 PostScaler = 8 - PR2 = 156 - Freq = 50.08 Hz - Period = 0.019968 seconds
@@ -116,7 +126,7 @@ void timer2_init(void)
     PR2 = 156; // PR2 (Timer2 Match value)
     
     PIR1bits.TMR2IF = 0;
-    PIE1bits.TMR2IE = 1;
+//    PIE1bits.TMR2IE = 1;
 }
 
 char dummy;
@@ -163,11 +173,5 @@ void interrupt isr(void)
         
         SSPCONbits.CKP = 1; // release clock
         PIR1bits.SSPIF = 0;
-    }
-
-    if(PIR1bits.TMR2IF == 1)
-    {
-        display_cyclicTasks();
-        PIR1bits.TMR2IF = 0;
     }
 }

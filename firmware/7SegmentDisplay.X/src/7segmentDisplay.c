@@ -1,6 +1,7 @@
 
 #include <xc.h>
 #include "7segmentDisplay.h"
+#include <string.h>
 
 
 // *** macros ******************************************************************
@@ -17,6 +18,7 @@
 #define display_disableDigit()  PORTA = 0x00
 #define display_setDigitValue(x) PORTB = ((unsigned char)x)
 
+#define NUMBER_OF_SLOTS   5
 
 // *** internal typedefs *******************************************************
 
@@ -35,18 +37,18 @@ unsigned char onTimeCounter;
 unsigned char offTimeCounter;
 
 unsigned char activeSlot;
-displayConfig_t display; // config
-displayValue_t slots[3];
+displayConfig_t displayCfg;
+displayValue_t slots[NUMBER_OF_SLOTS];
+unsigned char blankDigitTransitionCounter; // number of empty digits when transitioning
 
 segValue_t currentDigits[4]; // currently displayed digits
-segValue_t isr_currentDigits[4]; // in isr calculated digits used in next round
 
 state_t state;
 
-unsigned char tickCounter;
+unsigned short tickCounter;
 
 // *** led values **************************************************************
-const unsigned char ledPwmValues[100] = {0,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,
+const unsigned char ledPwmValues[101] = {0,0,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,
     3,3,4,4,4,4,4,5,5,5,5,6,6,6,7,7,7,8,8,9,9,10,10,11,11,12,13,13,14,15,16,17,
     17,18,19,20,22,23,24,25,27,28,30,31,33,35,37,39,41,43,45,48,50,53,56,59,62,
     66,69,73,77,81,86,90,95,100,106,112,118,124,131,138,146,153,162,171,180,190,200};
@@ -58,66 +60,37 @@ void display_init(void)
 {
     ADCON1 = 0x06; // PortA as digital I/O
 
-    display_enableDigit(DIGIT_1);
+    display_disableDigit();
     display_setDigitValue(SEGVALUE_OFF);
 
     TRISA = 0xF0;
     TRISB = 0x00;
 
-    slots[0].digits[0] = SEGVALUE_H;
-    slots[0].digits[1] = SEGVALUE_A;
-    slots[0].digits[2] = SEGVALUE_A;
-    slots[0].digits[3] = SEGVALUE_G;
-    slots[0].enabled = 0;
+    memset(slots, 0x00, sizeof(slots));
 
-    slots[1].digits[0] = SEGVALUE_ONE;
-    slots[1].digits[1] = SEGVALUE_TWO;
-    slots[1].digits[2] = SEGVALUE_THREE;
-    slots[1].digits[3] = SEGVALUE_FOUR;
-    slots[1].enabled = 0;
+    displayCfg.slotDuration = 120;
+    displayCfg.scrollDuration = 7;
+    displayCfg.transitionMode = SLOT_TRANS_MODE_SCROLL;
+    displayCfg.scrollBlanksCount = 2;
+    displayCfg.showColon = 1;
+    displayCfg.brightnessInPercent = 100;
 
-    slots[2].digits[0] = SEGVALUE_MINUS;
-    slots[2].digits[1] = SEGVALUE_MINUS;
-    slots[2].digits[2] = SEGVALUE_MINUS;
-    slots[2].digits[3] = SEGVALUE_MINUS;
-    slots[2].enabled = 0;
-
-    display.slotDuration = 150;
-    display.scrollDuration = 15;
-    display.transitionMode = SLOT_TRANS_MODE_SCROLL;
-    display.showColon = 1;
-    display.brightness = 90;
-
-    activeSlot = 0;
-    
     // 
-    currentDigits[0] = slots[activeSlot].digits[0];
-    currentDigits[1] = slots[activeSlot].digits[1];
-    currentDigits[2] = slots[activeSlot].digits[2];
-    currentDigits[3] = slots[activeSlot].digits[3];
+    currentDigits[0] = SEGVALUE_8;
+    currentDigits[1] = SEGVALUE_8;
+    currentDigits[2] = SEGVALUE_8;
+    currentDigits[3] = SEGVALUE_8;
 
-    isr_currentDigits[0] = slots[activeSlot].digits[0];
-    isr_currentDigits[1] = slots[activeSlot].digits[1];
-    isr_currentDigits[2] = slots[activeSlot].digits[2];
-    isr_currentDigits[3] = slots[activeSlot].digits[3];
-
-    onTimeCounter = ledPwmValues[display.brightness];
-    offTimeCounter = ledPwmValues[99] - onTimeCounter;
+    display_recalcPwmDutyCycle();
     
     state = STATE_DISPLAY;
-    tickCounter = 0;
+    activeSlot = 0xFF;
+    tickCounter = 0xFFFF;
 }
 
-void display_handler(void)
+void display_generatePwm(void)
 {
     unsigned short i;
-
-    // interrupts stay enabled, otherwise jitter increases (?)
-    currentDigits[0] = isr_currentDigits[0];
-    currentDigits[1] = isr_currentDigits[1];
-    currentDigits[2] = isr_currentDigits[2];
-    currentDigits[3] = isr_currentDigits[3];
-
 
     // digit 1
     display_setDigitValue(currentDigits[0]);
@@ -168,94 +141,113 @@ void display_handler(void)
         __delay_us(LED_RESOLUTION);
 }
 
-void display_cyclicTasks(void)
+void display_calcNextValueToShow(void)
 {
-    tickCounter++;
-
     switch(state)
     {
     case STATE_DISPLAY:
-        if(tickCounter == display.slotDuration)
+        if(tickCounter >= displayCfg.slotDuration)
         {
-            tickCounter = 0;
+            unsigned char currentSlot = activeSlot;
+            unsigned char slotCount = sizeof(slots) / sizeof(displayValue_t);
             
-            onTimeCounter = ledPwmValues[display.brightness];
-            offTimeCounter = ledPwmValues[99] - onTimeCounter;
+            tickCounter = 0;
 
-            activeSlot++;
-            if(activeSlot > 2)
-                activeSlot = 0;
-
-            if(display.transitionMode == SLOT_TRANS_MODE_SCROLL)
+            // find next enabled slot
+            do
             {
-                isr_currentDigits[0] = (isr_currentDigits[1] | 0x80);
-                isr_currentDigits[1] = isr_currentDigits[2];
-                isr_currentDigits[2] = isr_currentDigits[3];
-                isr_currentDigits[3] = SEGVALUE_OFF;
+                activeSlot++;
+                slotCount--;
+                if(activeSlot > (NUMBER_OF_SLOTS - 1))
+                    activeSlot = 0;
+            } while(slots[activeSlot].enabled == 0 && slotCount > 0);
+            
+            if(currentSlot == activeSlot || slotCount == 0)
+                break;
+
+            if(displayCfg.transitionMode == SLOT_TRANS_MODE_SCROLL)
+            {
+                currentDigits[0] = (currentDigits[1] | 0x80);
+                currentDigits[1] = currentDigits[2];
+                currentDigits[2] = currentDigits[3];
+                currentDigits[3] = SEGVALUE_OFF;
+                
+                blankDigitTransitionCounter = displayCfg.scrollBlanksCount;
 
                 state = STATE_TRANSIT_BLANK;
             }
             else
             {
-                if(display.showColon)
+                currentDigits[0] = slots[activeSlot].digits[0];
+                currentDigits[1] = slots[activeSlot].digits[1];
+                currentDigits[2] = slots[activeSlot].digits[2];
+                currentDigits[3] = slots[activeSlot].digits[3];
+                
+                if(displayCfg.showColon)
                 {
-                    isr_currentDigits[1] &= 0x7F;
+                    currentDigits[0] &= 0x7F;
+                    currentDigits[1] &= 0x7F;
                 }
-
-                isr_currentDigits[0] = slots[activeSlot].digits[0];
-                isr_currentDigits[1] = slots[activeSlot].digits[1];
-                isr_currentDigits[2] = slots[activeSlot].digits[2];
-                isr_currentDigits[3] = slots[activeSlot].digits[3];
             }
         }
         break;
     case STATE_TRANSIT_BLANK:
-        if(tickCounter == display.scrollDuration)
+        if(tickCounter >= displayCfg.scrollDuration)
         {
-            isr_currentDigits[0] = isr_currentDigits[1];
-            isr_currentDigits[1] = isr_currentDigits[2];
-            isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = slots[activeSlot].digits[0];
+            if(blankDigitTransitionCounter > 0)
+                blankDigitTransitionCounter--;
+            
+            currentDigits[0] = currentDigits[1];
+            currentDigits[1] = currentDigits[2];
+            currentDigits[2] = currentDigits[3];
+
+            if(blankDigitTransitionCounter == 0)
+            {
+                currentDigits[3] = slots[activeSlot].digits[0];
+                state = STATE_TRANSIT_DIG_1;
+            }
+            else
+                currentDigits[3] = SEGVALUE_OFF;
                 
             tickCounter = 0;
-            state = STATE_TRANSIT_DIG_1;
         }
         break;
     case STATE_TRANSIT_DIG_1:
-        if(tickCounter == display.scrollDuration)
+        if(tickCounter >= displayCfg.scrollDuration)
         {
-            isr_currentDigits[0] = isr_currentDigits[1];
-            isr_currentDigits[1] = isr_currentDigits[2];
-            isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = slots[activeSlot].digits[1];
+            currentDigits[0] = currentDigits[1];
+            currentDigits[1] = currentDigits[2];
+            currentDigits[2] = currentDigits[3];
+            currentDigits[3] = slots[activeSlot].digits[1];
                 
             tickCounter = 0;
             state = STATE_TRANSIT_DIG_2;
         }
         break;
     case STATE_TRANSIT_DIG_2:
-        if(tickCounter == display.scrollDuration)
+        if(tickCounter >= displayCfg.scrollDuration)
         {
-            isr_currentDigits[0] = isr_currentDigits[1];
-            isr_currentDigits[1] = isr_currentDigits[2];
-            isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = slots[activeSlot].digits[2];
+            currentDigits[0] = currentDigits[1];
+            currentDigits[1] = currentDigits[2];
+            currentDigits[2] = currentDigits[3];
+            currentDigits[3] = slots[activeSlot].digits[2];
                 
             tickCounter = 0;
             state = STATE_TRANSIT_DIG_3;
         }
         break;
     case STATE_TRANSIT_DIG_3:
-        if(tickCounter == display.scrollDuration)
+        if(tickCounter >= displayCfg.scrollDuration)
         {
-            isr_currentDigits[0] = isr_currentDigits[1];
-            isr_currentDigits[1] = isr_currentDigits[2];
-            isr_currentDigits[2] = isr_currentDigits[3];
-            isr_currentDigits[3] = slots[activeSlot].digits[3];
+            currentDigits[0] = currentDigits[1];
+            currentDigits[1] = currentDigits[2];
+            currentDigits[2] = currentDigits[3];
+            currentDigits[3] = slots[activeSlot].digits[3];
             
-            if(display.showColon)
+            if(displayCfg.showColon)
             {
-                isr_currentDigits[1] &= 0x7F;
+                currentDigits[0] &= 0x7F;
+                currentDigits[1] &= 0x7F;
             }
             
             tickCounter = 0;
@@ -263,16 +255,47 @@ void display_cyclicTasks(void)
         }
         break;
     }
+    
+    tickCounter++;
 }
 
-void display_setBrightness(char percent)
+void display_recalcPwmDutyCycle(void)
 {
-    if(percent > 0)
-        percent--;
-    
-    display.brightness = (percent > 99) ? 99 : percent;
-    
-    onTimeCounter = ledPwmValues[display.brightness];
-    offTimeCounter = ledPwmValues[99] - onTimeCounter;
+    onTimeCounter = ledPwmValues[displayCfg.brightnessInPercent];
+    offTimeCounter = ledPwmValues[100] - onTimeCounter;
 }
 
+void display_setConfig(displayConfig_t* config)
+{
+    displayCfg = *config;
+}
+
+void display_setConfig_brightness(unsigned char percent)
+{
+    if(percent > 100)
+        percent = 100;
+    
+    displayCfg.brightnessInPercent = percent;
+}
+
+void display_setSlotDisplayValue(unsigned char slotNumber, displayValue_t* value)
+{
+    if(slotNumber < NUMBER_OF_SLOTS)
+    {
+        slots[slotNumber] = *value;
+        
+        if(state == STATE_DISPLAY && slotNumber == activeSlot)
+        {
+            currentDigits[0] = slots[activeSlot].digits[0];
+            currentDigits[1] = slots[activeSlot].digits[1];
+            currentDigits[2] = slots[activeSlot].digits[2];
+            currentDigits[3] = slots[activeSlot].digits[3];
+            
+            if(displayCfg.showColon)
+            {
+                currentDigits[0] &= 0x7F;
+                currentDigits[1] &= 0x7F;
+            }
+        }
+    }
+}

@@ -5,7 +5,9 @@
         <group>
             <file>file:/home/seven/dev/7SegmentDisplay/firmware/7SegmentDisplay.X/src/main.c</file>
             <file>file:/home/seven/dev/7SegmentDisplay/firmware/7SegmentDisplay.X/src/7segmentDisplay.c</file>
+            <file>file:/home/seven/dev/7SegmentDisplay/firmware/7SegmentDisplay.X/src/i2c.h</file>
             <file>file:/home/seven/dev/7SegmentDisplay/firmware/7SegmentDisplay.X/src/7segmentDisplay.h</file>
+            <file>file:/home/seven/dev/7SegmentDisplay/firmware/7SegmentDisplay.X/src/i2c.c</file>
         </group>
     </open-files>
 </project-private>
